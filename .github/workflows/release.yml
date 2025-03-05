@@ -1,0 +1,75 @@
+name: 'Release'
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches-ignore:
+      - "**"
+
+permissions:
+  actions: write
+  attestations: write
+  checks: write
+  contents: write
+  deployments: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Go 1.23.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Checkout Supercronic
+        uses: actions/checkout@v4
+        with:
+          repository: aptible/supercronic
+          ref: refs/tags/v0.2.33
+          path: supercronic
+
+      - name: Build Supercronic
+        run: cd supercronic && go mod vendor && go build -ldflags="-X 'main.Version=v0.2.33'"
+
+      - name: Checkout ETERNA SOLR Backup container image source
+        uses: actions/checkout@v4
+        with:
+          path: eterna-solr-backup
+
+      - name: Create container metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/whitered-se/eterna-solr-backup
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+          flavor: |
+            latest=true
+
+      - name: Build ETERNA SOLR Backup container image
+        run: |
+          cd eterna-solr-backup
+          chmod +x ./buildah-script.sh
+          buildah unshare ./buildah-script.sh $TAGS
+        env:
+          TAGS: ${{ join(steps.meta.outputs.tags, ' ') }}
+
+      - name: Log in to the GitHub Container registry
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to GitHub Container Repository
+        id: push-to-ghcr
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          tags: ${{ steps.meta.outputs.tags }}
+
